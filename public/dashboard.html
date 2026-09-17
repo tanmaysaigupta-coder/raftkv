@@ -374,16 +374,16 @@ async function refresh() {
     const source = leader || nodes.find((n) => n.role !== 'down');
     if (source) {
       document.getElementById('dumpSource').textContent = source.id;
-      loadKvTable(source.port);
+      loadKvTable(source.id);
     }
   } catch (e) {
     // dashboard's own fetch failed; try again next tick
   }
 }
 
-async function loadKvTable(port) {
+async function loadKvTable(nodeId) {
   try {
-    const res = await fetch(`http://localhost:${port}/kv/all`);
+    const res = await fetch(`/api/dump?id=${encodeURIComponent(nodeId)}`);
     const { entries } = await res.json();
     const tbody = document.querySelector('#kvTable tbody');
     if (!entries.length) {

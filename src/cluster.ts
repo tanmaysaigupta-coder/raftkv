@@ -16,7 +16,8 @@ const projectRoot = path.resolve(__dirname, '..');
 
 const NODE_COUNT = Number(process.env.CLUSTER_SIZE ?? 5);
 const BASE_PORT = Number(process.env.BASE_PORT ?? 4001);
-const DASHBOARD_PORT = Number(process.env.DASHBOARD_PORT ?? 4000);
+// Hosts like Render assign the public port via $PORT; DASHBOARD_PORT is kept as an explicit override for local use.
+const DASHBOARD_PORT = Number(process.env.PORT ?? process.env.DASHBOARD_PORT ?? 4000);
 
 const ids = Array.from({ length: NODE_COUNT }, (_, i) => `n${i + 1}`);
 const ports = new Map(ids.map((id, i) => [id, BASE_PORT + i]));
@@ -150,6 +151,23 @@ const server = http.createServer(async (req, res) => {
       ? await proposeToCluster('/kv/delete', { key })
       : await proposeToCluster('/kv/set', { key, value });
     return sendJson(res, result.status, result.json);
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/dump') {
+    // Proxied server-side (rather than the browser hitting a node port directly) so this
+    // also works when the dashboard is deployed remotely and node ports aren't public.
+    const preferred = url.searchParams.get('id');
+    const order = preferred ? [preferred, ...ids.filter((i) => i !== preferred)] : ids;
+    for (const id of order) {
+      if (killedByUser.has(id) || !children.has(id)) continue;
+      try {
+        const r = await fetch(`${addresses.get(id)}/kv/all`);
+        if (r.ok) return sendJson(res, 200, await r.json());
+      } catch {
+        // try next node
+      }
+    }
+    return sendJson(res, 503, { entries: [] });
   }
 
   if (req.method === 'GET' && url.pathname === '/api/read') {

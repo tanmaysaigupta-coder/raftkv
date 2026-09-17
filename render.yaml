@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: raftkv
+    runtime: node
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm run cluster
+    envVars:
+      - key: NODE_VERSION
+        value: 20.11.0
