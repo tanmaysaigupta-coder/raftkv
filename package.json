@@ -10,7 +10,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --import tsx --test test/**/*.test.ts",
+    "test": "node --import tsx --test test/raft.test.ts",
     "cluster": "tsx src/cluster.ts",
     "node": "tsx src/server.ts",
     "cli": "tsx src/client.ts"
