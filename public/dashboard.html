@@ -3,144 +3,351 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>RaftKV Cluster</title>
+<meta name="description" content="RaftKV — a distributed key-value store on a from-scratch Raft consensus implementation. Watch leader election and failover happen live." />
+<title>RaftKV — live Raft cluster</title>
 <style>
   :root {
     --bg: #0a0b12;
-    --panel: #12131e;
+    --bg2: #0d0f1a;
+    --panel: #12131ecc;
+    --panel-solid: #12131e;
     --border: rgba(255,255,255,0.08);
+    --border-soft: rgba(255,255,255,0.05);
     --text: #eef0ff;
-    --dim: #888ebf;
+    --dim: #8b8fc0;
+    --dim2: #5f6390;
     --leader: #ffcc55;
     --candidate: #ff9d5c;
     --follower: #5c9dff;
     --down: #45495c;
     --accent: #35e0d0;
+    --accent-2: #6c7bff;
+    --mono: 'SF Mono', 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
   }
   * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
   body {
     margin: 0;
-    background: radial-gradient(ellipse at top, #10122099, var(--bg));
+    background:
+      radial-gradient(ellipse 900px 500px at 15% -10%, #6c7bff22, transparent),
+      radial-gradient(ellipse 700px 500px at 100% 0%, #35e0d018, transparent),
+      var(--bg);
     color: var(--text);
-    font-family: 'SF Mono', 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace;
-    padding: 28px;
+    font-family: var(--sans);
     min-height: 100vh;
+    line-height: 1.5;
   }
-  header { display:flex; align-items:baseline; gap:14px; margin-bottom:22px; flex-wrap: wrap; }
-  h1 { font-size:20px; margin:0; letter-spacing:0.02em; }
-  h1 span { color: var(--accent); }
-  .sub { color: var(--dim); font-size:12px; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 36px 24px 60px; }
 
+  /* ---------- Hero ---------- */
+  .hero { margin-bottom: 34px; }
+  .kicker {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em;
+    color: var(--accent); background: rgba(53,224,208,0.1); border: 1px solid rgba(53,224,208,0.25);
+    padding: 5px 11px; border-radius: 20px; margin-bottom: 16px;
+  }
+  .kicker .pulse {
+    width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
+    box-shadow: 0 0 8px var(--accent); animation: pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+  h1 { font-size: 32px; margin: 0 0 12px; letter-spacing: -0.02em; font-weight: 800; }
+  h1 span { background: linear-gradient(90deg, var(--accent), var(--accent-2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .lede { color: var(--dim); font-size: 15px; max-width: 700px; margin: 0 0 20px; }
+  .lede code { font-family: var(--mono); background: rgba(255,255,255,0.06); padding: 1px 6px; border-radius: 5px; font-size: 13px; color: var(--text); }
+
+  .try-this {
+    display: flex; align-items: flex-start; gap: 12px;
+    background: linear-gradient(135deg, rgba(255,204,85,0.08), rgba(255,204,85,0.02));
+    border: 1px solid rgba(255,204,85,0.25); border-radius: 12px;
+    padding: 14px 16px; font-size: 13px; color: #ffe2a3; max-width: 700px;
+  }
+  .try-this b { color: var(--leader); }
+
+  /* ---------- Section headers ---------- */
+  .section-title {
+    font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--dim2); margin: 0 0 14px; display: flex; align-items: center; gap: 10px;
+  }
+  .section-title::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+  section { margin-bottom: 30px; }
+
+  /* ---------- Summary strip ---------- */
+  .summary {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px;
+    background: var(--border); border: 1px solid var(--border); border-radius: 14px; overflow: hidden;
+    margin-bottom: 30px;
+  }
+  .summary-cell { background: var(--panel-solid); padding: 14px 18px; }
+  .summary-cell .k { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--dim2); margin-bottom: 4px; }
+  .summary-cell .v { font-family: var(--mono); font-size: 20px; font-weight: 700; }
+  .summary-cell .v.leader-text { color: var(--leader); }
+  .summary-cell .v.accent-text { color: var(--accent); }
+
+  /* ---------- Node grid ---------- */
   .grid {
     display:grid;
-    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
-    gap:14px;
-    margin-bottom: 26px;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap:12px;
   }
   .card {
     background: var(--panel);
+    backdrop-filter: blur(8px);
     border:1px solid var(--border);
     border-radius:14px;
     padding:16px;
     position:relative;
-    transition: border-color .2s, transform .2s;
+    transition: border-color .25s, box-shadow .25s, opacity .25s;
   }
-  .card.role-leader { border-color: var(--leader); box-shadow: 0 0 24px -8px var(--leader); }
-  .card.role-candidate { border-color: var(--candidate); }
-  .card.role-down { opacity: 0.5; }
+  .card.role-leader { border-color: var(--leader); box-shadow: 0 0 0 1px rgba(255,204,85,0.2), 0 0 28px -6px rgba(255,204,85,0.55); }
+  .card.role-candidate { border-color: var(--candidate); box-shadow: 0 0 20px -8px rgba(255,157,92,0.5); }
+  .card.role-down { opacity: 0.45; }
 
-  .card-top { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
-  .node-id { font-weight:700; font-size:15px; }
+  .card-top { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
+  .node-id { font-weight:700; font-size:15px; font-family: var(--mono); }
   .badge {
+    font-family: var(--mono);
     font-size:10px; text-transform:uppercase; letter-spacing:0.06em;
-    padding:3px 8px; border-radius:20px; font-weight:700;
+    padding:3px 9px; border-radius:20px; font-weight:700;
   }
   .badge.leader { background: rgba(255,204,85,0.18); color: var(--leader); }
   .badge.candidate { background: rgba(255,157,92,0.18); color: var(--candidate); }
   .badge.follower { background: rgba(92,157,255,0.18); color: var(--follower); }
   .badge.down { background: rgba(69,73,92,0.3); color: var(--dim); }
 
-  .row { display:flex; justify-content:space-between; font-size:12px; color: var(--dim); margin:4px 0; }
+  .row { display:flex; justify-content:space-between; font-family: var(--mono); font-size:12px; color: var(--dim); margin:5px 0; }
   .row b { color: var(--text); font-weight:600; }
 
-  .card-actions { margin-top:12px; display:flex; gap:6px; }
+  .card-actions { margin-top:14px; display:flex; gap:6px; }
   button {
-    font-family: inherit;
+    font-family: var(--sans);
     background: rgba(255,255,255,0.05);
     border:1px solid var(--border);
     color: var(--text);
     border-radius:8px;
-    padding:6px 10px;
-    font-size:11px;
+    padding:7px 11px;
+    font-size:12px;
+    font-weight: 600;
     cursor:pointer;
+    transition: background .15s, border-color .15s, color .15s;
   }
   button:hover { background: rgba(255,255,255,0.1); }
   button.danger:hover { border-color:#ff6a6a; color:#ff6a6a; }
   button.good:hover { border-color: var(--accent); color: var(--accent); }
-  button:disabled { opacity:0.35; cursor:not-allowed; }
+  button:disabled { opacity:0.3; cursor:not-allowed; }
 
+  /* ---------- Panels ---------- */
   .panel {
     background: var(--panel);
+    backdrop-filter: blur(8px);
     border:1px solid var(--border);
     border-radius:14px;
-    padding:18px;
-    margin-bottom:18px;
+    padding:20px;
   }
-  .panel h2 { font-size:12px; text-transform:uppercase; letter-spacing:0.08em; color:var(--dim); margin:0 0 12px; }
-  .kv-form { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+
+  .kv-form { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom: 10px; }
   input[type=text] {
     background:#0d0e17; border:1px solid var(--border); color:var(--text);
-    border-radius:8px; padding:8px 10px; font-family:inherit; font-size:12px;
-    width: 160px;
+    border-radius:8px; padding:9px 11px; font-family: var(--mono); font-size:12px;
+    width: 140px;
   }
-  .kv-form button { padding:8px 14px; }
-  #writeResult { font-size:12px; color: var(--dim); margin-top:10px; min-height: 1.2em; }
+  input[type=text]:focus { outline: none; border-color: var(--accent-2); }
+  .kv-form button { padding:9px 16px; }
+  #writeResult { font-family: var(--mono); font-size:12px; color: var(--dim); min-height: 1.4em; }
   #writeResult.ok { color: var(--accent); }
   #writeResult.err { color: #ff8a8a; }
 
-  table { width:100%; border-collapse: collapse; font-size:12px; }
-  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--border); }
-  th { color: var(--dim); font-weight:600; text-transform:uppercase; font-size:10px; letter-spacing:0.05em; }
-  .empty { color: var(--dim); font-style: italic; }
+  table { width:100%; border-collapse: collapse; font-family: var(--mono); font-size:12px; }
+  th, td { text-align:left; padding:7px 8px; border-bottom:1px solid var(--border-soft); }
+  th { color: var(--dim2); font-weight:600; text-transform:uppercase; font-size:10px; letter-spacing:0.05em; }
+  .empty { color: var(--dim2); font-style: italic; }
+
+  /* ---------- Event log ---------- */
+  #eventLog {
+    font-family: var(--mono); font-size: 12px; height: 220px; overflow-y: auto;
+    display: flex; flex-direction: column-reverse; gap: 4px;
+  }
+  .event { color: var(--dim); padding: 3px 0; border-bottom: 1px solid var(--border-soft); display: flex; gap: 8px; }
+  .event .t { color: var(--dim2); flex-shrink: 0; }
+  .event.election { color: var(--candidate); }
+  .event.leader { color: var(--leader); }
+  .event.down { color: #ff8a8a; }
+  .event.up { color: var(--accent); }
+
+  /* ---------- How it works ---------- */
+  .explainer { color: var(--dim); font-size: 13.5px; }
+  .explainer p { margin: 0 0 12px; }
+  .explainer b { color: var(--text); }
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 16px; }
+  .step { background: rgba(255,255,255,0.03); border: 1px solid var(--border-soft); border-radius: 10px; padding: 14px; }
+  .step .num {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 22px; height: 22px; border-radius: 50%; background: rgba(108,123,255,0.18); color: var(--accent-2);
+    font-family: var(--mono); font-size: 11px; font-weight: 700; margin-bottom: 8px;
+  }
+  .step h3 { font-size: 13px; margin: 0 0 6px; color: var(--text); }
+  .step p { font-size: 12.5px; margin: 0; color: var(--dim); }
+
+  footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid var(--border); color: var(--dim2); font-size: 12px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+  footer a { color: var(--accent); text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+
+  @media (max-width: 760px) {
+    .summary { grid-template-columns: repeat(2, 1fr); }
+    .two-col { grid-template-columns: 1fr; }
+    .steps { grid-template-columns: 1fr; }
+    h1 { font-size: 26px; }
+  }
 </style>
 </head>
 <body>
-  <header>
-    <h1>Raft<span>KV</span></h1>
-    <span class="sub">live cluster dashboard &middot; kill a leader and watch re-election happen</span>
-  </header>
+  <div class="wrap">
 
-  <div class="grid" id="grid"></div>
-
-  <div class="panel">
-    <h2>Write / Read (routed through the cluster to whichever node is leader)</h2>
-    <div class="kv-form">
-      <input type="text" id="key" placeholder="key" />
-      <input type="text" id="value" placeholder="value" />
-      <button id="setBtn" class="good">SET</button>
-      <button id="getBtn">GET</button>
-      <button id="delBtn" class="danger">DELETE</button>
+    <div class="hero">
+      <div class="kicker"><span class="pulse"></span> live distributed system &middot; polling every 500ms</div>
+      <h1>Raft<span>KV</span></h1>
+      <p class="lede">
+        Five independent server processes below are running a <b style="color:var(--text)">from-scratch implementation of the Raft consensus algorithm</b>
+        — the same protocol behind etcd, Consul, and CockroachDB. They elected a leader among themselves with no coordinator,
+        and every write you make is replicated to a majority of them before it's acknowledged.
+      </p>
+      <div class="try-this">
+        ⚡ <span><b>Try it:</b> hit <b>Kill</b> on whichever node is currently the <b style="color:var(--leader)">LEADER</b>. Within about a second the remaining nodes
+        will notice, hold an election, and promote a new leader — watch the term number jump and a new gold card light up below.
+        Writes keep succeeding the whole time.</span>
+      </div>
     </div>
-    <div id="writeResult"></div>
-  </div>
 
-  <div class="panel">
-    <h2>Replicated state (from <span id="dumpSource">n1</span>)</h2>
-    <table id="kvTable">
-      <thead><tr><th>Key</th><th>Value</th></tr></thead>
-      <tbody><tr><td colspan="2" class="empty">empty</td></tr></tbody>
-    </table>
+    <div class="summary" id="summary"></div>
+
+    <section>
+      <h2 class="section-title">Cluster — 5 nodes</h2>
+      <div class="grid" id="grid"></div>
+    </section>
+
+    <section>
+      <div class="two-col">
+        <div class="panel">
+          <h2 class="section-title">Write / read</h2>
+          <p style="font-size:12px;color:var(--dim);margin-top:-6px;">Routed through the cluster to whichever node is currently leader — a follower would reject it.</p>
+          <div class="kv-form">
+            <input type="text" id="key" placeholder="key" />
+            <input type="text" id="value" placeholder="value" />
+            <button id="setBtn" class="good">SET</button>
+            <button id="getBtn">GET</button>
+            <button id="delBtn" class="danger">DELETE</button>
+          </div>
+          <div id="writeResult"></div>
+        </div>
+        <div class="panel">
+          <h2 class="section-title">Event log</h2>
+          <div id="eventLog"></div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="panel">
+        <h2 class="section-title">Replicated state — read from <span id="dumpSource" style="color:var(--accent)">n1</span></h2>
+        <table id="kvTable">
+          <thead><tr><th>Key</th><th>Value</th></tr></thead>
+          <tbody><tr><td colspan="2" class="empty">empty</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section>
+      <div class="panel explainer">
+        <h2 class="section-title">What's actually being demonstrated</h2>
+        <p>
+          Computing gravity or rendering a game is easy to make look impressive. Getting <b>multiple independent computers to agree on a single
+          sequence of events, even while some of them are actively crashing</b>, is the unglamorous problem every real distributed database has
+          to solve — and it's notoriously easy to get subtly wrong. Raft was published specifically because the previous standard algorithm, Paxos,
+          was too hard for most engineers to implement correctly. This page runs the real thing, not a simulation of it.
+        </p>
+        <div class="steps">
+          <div class="step">
+            <div class="num">1</div>
+            <h3>Leader election</h3>
+            <p>Each node runs a randomized timer. If it hears nothing from a leader before that timer fires, it becomes a candidate, votes for itself,
+            and asks every peer for a vote. First to a majority becomes leader for that term.</p>
+          </div>
+          <div class="step">
+            <div class="num">2</div>
+            <h3>Log replication</h3>
+            <p>Every SET/DELETE you submit becomes a log entry on the leader, which streams it to all followers. Once a <b style="color:var(--text)">majority</b>
+            have stored it, it's "committed" and applied to the key-value map — that's what makes it durable.</p>
+          </div>
+          <div class="step">
+            <div class="num">3</div>
+            <h3>Fault tolerance</h3>
+            <p>Kill any minority of nodes (here: up to 2 of 5) and the cluster keeps working. Kill the leader specifically and a new
+            election happens automatically — no committed write is ever lost.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <span>Zero external dependencies &middot; TypeScript &middot; implements Ongaro &amp; Ousterhout's Raft paper directly</span>
+      <a href="https://raft.github.io/raft.pdf" target="_blank" rel="noopener">Read the Raft paper →</a>
+    </footer>
+
   </div>
 
 <script>
 const grid = document.getElementById('grid');
+const summaryEl = document.getElementById('summary');
+const eventLogEl = document.getElementById('eventLog');
 
 function roleClass(role) { return role || 'down'; }
+
+// --- Event log: diff each poll against the previous one and narrate what changed ---
+let prevById = new Map();
+let writeCount = 0;
+
+function logEvent(text, cls) {
+  const el = document.createElement('div');
+  el.className = 'event ' + (cls || '');
+  const time = new Date().toLocaleTimeString([], { hour12: false });
+  el.innerHTML = `<span class="t">${time}</span><span>${text}</span>`;
+  eventLogEl.prepend(el);
+  while (eventLogEl.children.length > 60) eventLogEl.removeChild(eventLogEl.lastChild);
+}
+
+function diffAndLog(nodes) {
+  for (const n of nodes) {
+    const prev = prevById.get(n.id);
+    if (!prev) continue;
+    if (prev.role !== 'down' && n.role === 'down') logEvent(`<b>${n.id}</b> went down`, 'down');
+    if (prev.role === 'down' && n.role !== 'down') logEvent(`<b>${n.id}</b> came back up`, 'up');
+    if (n.role === 'candidate' && prev.role !== 'candidate') logEvent(`<b>${n.id}</b> started an election (term ${n.term})`, 'election');
+    if (n.role === 'leader' && prev.role !== 'leader') logEvent(`<b>${n.id}</b> became leader (term ${n.term})`, 'leader');
+  }
+  prevById = new Map(nodes.map((n) => [n.id, n]));
+}
 
 async function refresh() {
   try {
     const res = await fetch('/api/status');
     const { nodes } = await res.json();
+
+    diffAndLog(nodes);
+
+    const leader = nodes.find((n) => n.role === 'leader');
+    const alive = nodes.filter((n) => n.role !== 'down').length;
+    const maxCommit = Math.max(0, ...nodes.map((n) => n.commitIndex ?? 0));
+    summaryEl.innerHTML = `
+      <div class="summary-cell"><div class="k">Current leader</div><div class="v leader-text">${leader ? leader.id : '— electing —'}</div></div>
+      <div class="summary-cell"><div class="k">Term</div><div class="v">${leader ? leader.term : (nodes[0]?.term ?? '-')}</div></div>
+      <div class="summary-cell"><div class="k">Nodes alive</div><div class="v accent-text">${alive} / ${nodes.length}</div></div>
+      <div class="summary-cell"><div class="k">Committed entries</div><div class="v">${maxCommit}</div></div>
+    `;
+
     grid.innerHTML = '';
     for (const n of nodes) {
       const card = document.createElement('div');
@@ -164,7 +371,6 @@ async function refresh() {
       grid.appendChild(card);
     }
 
-    const leader = nodes.find((n) => n.role === 'leader');
     const source = leader || nodes.find((n) => n.role !== 'down');
     if (source) {
       document.getElementById('dumpSource').textContent = source.id;
@@ -225,9 +431,11 @@ document.getElementById('setBtn').addEventListener('click', async () => {
   if (res.ok) {
     resultEl.textContent = `committed at log index ${json.index}`;
     resultEl.className = 'ok';
+    logEvent(`SET <b>${escapeHtml(key)}</b> = ${escapeHtml(value)} — committed at index ${json.index}`, 'up');
   } else {
     resultEl.textContent = `failed: ${json.error || res.status}`;
     resultEl.className = 'err';
+    logEvent(`write failed: ${escapeHtml(json.error || String(res.status))}`, 'down');
   }
   refresh();
 });
@@ -246,7 +454,6 @@ document.getElementById('delBtn').addEventListener('click', async () => {
   if (!key) return;
   resultEl.textContent = 'deleting...';
   resultEl.className = '';
-  // reuse /api/write's leader-routing logic isn't wired for delete; go straight to the write endpoint's cluster fallback via SET-style routing
   const res = await fetch('/api/write', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -255,9 +462,11 @@ document.getElementById('delBtn').addEventListener('click', async () => {
   const json = await res.json();
   resultEl.textContent = res.ok ? `deleted (log index ${json.index})` : `failed: ${json.error || res.status}`;
   resultEl.className = res.ok ? 'ok' : 'err';
+  if (res.ok) logEvent(`DELETE <b>${escapeHtml(key)}</b> — committed at index ${json.index}`, 'up');
   refresh();
 });
 
+logEvent('dashboard connected — polling cluster status', '');
 refresh();
 setInterval(refresh, 500);
 </script>
