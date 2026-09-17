@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>RaftKV Cluster</title>
+<style>
+  :root {
+    --bg: #0a0b12;
+    --panel: #12131e;
+    --border: rgba(255,255,255,0.08);
+    --text: #eef0ff;
+    --dim: #888ebf;
+    --leader: #ffcc55;
+    --candidate: #ff9d5c;
+    --follower: #5c9dff;
+    --down: #45495c;
+    --accent: #35e0d0;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: radial-gradient(ellipse at top, #10122099, var(--bg));
+    color: var(--text);
+    font-family: 'SF Mono', 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace;
+    padding: 28px;
+    min-height: 100vh;
+  }
+  header { display:flex; align-items:baseline; gap:14px; margin-bottom:22px; flex-wrap: wrap; }
+  h1 { font-size:20px; margin:0; letter-spacing:0.02em; }
+  h1 span { color: var(--accent); }
+  .sub { color: var(--dim); font-size:12px; }
+
+  .grid {
+    display:grid;
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+    gap:14px;
+    margin-bottom: 26px;
+  }
+  .card {
+    background: var(--panel);
+    border:1px solid var(--border);
+    border-radius:14px;
+    padding:16px;
+    position:relative;
+    transition: border-color .2s, transform .2s;
+  }
+  .card.role-leader { border-color: var(--leader); box-shadow: 0 0 24px -8px var(--leader); }
+  .card.role-candidate { border-color: var(--candidate); }
+  .card.role-down { opacity: 0.5; }
+
+  .card-top { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+  .node-id { font-weight:700; font-size:15px; }
+  .badge {
+    font-size:10px; text-transform:uppercase; letter-spacing:0.06em;
+    padding:3px 8px; border-radius:20px; font-weight:700;
+  }
+  .badge.leader { background: rgba(255,204,85,0.18); color: var(--leader); }
+  .badge.candidate { background: rgba(255,157,92,0.18); color: var(--candidate); }
+  .badge.follower { background: rgba(92,157,255,0.18); color: var(--follower); }
+  .badge.down { background: rgba(69,73,92,0.3); color: var(--dim); }
+
+  .row { display:flex; justify-content:space-between; font-size:12px; color: var(--dim); margin:4px 0; }
+  .row b { color: var(--text); font-weight:600; }
+
+  .card-actions { margin-top:12px; display:flex; gap:6px; }
+  button {
+    font-family: inherit;
+    background: rgba(255,255,255,0.05);
+    border:1px solid var(--border);
+    color: var(--text);
+    border-radius:8px;
+    padding:6px 10px;
+    font-size:11px;
+    cursor:pointer;
+  }
+  button:hover { background: rgba(255,255,255,0.1); }
+  button.danger:hover { border-color:#ff6a6a; color:#ff6a6a; }
+  button.good:hover { border-color: var(--accent); color: var(--accent); }
+  button:disabled { opacity:0.35; cursor:not-allowed; }
+
+  .panel {
+    background: var(--panel);
+    border:1px solid var(--border);
+    border-radius:14px;
+    padding:18px;
+    margin-bottom:18px;
+  }
+  .panel h2 { font-size:12px; text-transform:uppercase; letter-spacing:0.08em; color:var(--dim); margin:0 0 12px; }
+  .kv-form { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  input[type=text] {
+    background:#0d0e17; border:1px solid var(--border); color:var(--text);
+    border-radius:8px; padding:8px 10px; font-family:inherit; font-size:12px;
+    width: 160px;
+  }
+  .kv-form button { padding:8px 14px; }
+  #writeResult { font-size:12px; color: var(--dim); margin-top:10px; min-height: 1.2em; }
+  #writeResult.ok { color: var(--accent); }
+  #writeResult.err { color: #ff8a8a; }
+
+  table { width:100%; border-collapse: collapse; font-size:12px; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--border); }
+  th { color: var(--dim); font-weight:600; text-transform:uppercase; font-size:10px; letter-spacing:0.05em; }
+  .empty { color: var(--dim); font-style: italic; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Raft<span>KV</span></h1>
+    <span class="sub">live cluster dashboard &middot; kill a leader and watch re-election happen</span>
+  </header>
+
+  <div class="grid" id="grid"></div>
+
+  <div class="panel">
+    <h2>Write / Read (routed through the cluster to whichever node is leader)</h2>
+    <div class="kv-form">
+      <input type="text" id="key" placeholder="key" />
+      <input type="text" id="value" placeholder="value" />
+      <button id="setBtn" class="good">SET</button>
+      <button id="getBtn">GET</button>
+      <button id="delBtn" class="danger">DELETE</button>
+    </div>
+    <div id="writeResult"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Replicated state (from <span id="dumpSource">n1</span>)</h2>
+    <table id="kvTable">
+      <thead><tr><th>Key</th><th>Value</th></tr></thead>
+      <tbody><tr><td colspan="2" class="empty">empty</td></tr></tbody>
+    </table>
+  </div>
+
+<script>
+const grid = document.getElementById('grid');
+
+function roleClass(role) { return role || 'down'; }
+
+async function refresh() {
+  try {
+    const res = await fetch('/api/status');
+    const { nodes } = await res.json();
+    grid.innerHTML = '';
+    for (const n of nodes) {
+      const card = document.createElement('div');
+      card.className = 'card role-' + roleClass(n.role);
+      const isDown = n.role === 'down' || !n.role;
+      card.innerHTML = `
+        <div class="card-top">
+          <span class="node-id">${n.id}</span>
+          <span class="badge ${roleClass(n.role)}">${n.role || 'down'}</span>
+        </div>
+        <div class="row"><span>term</span><b>${n.term ?? '-'}</b></div>
+        <div class="row"><span>leader</span><b>${n.leaderId ?? '-'}</b></div>
+        <div class="row"><span>log length</span><b>${n.logLength ?? '-'}</b></div>
+        <div class="row"><span>commit idx</span><b>${n.commitIndex ?? '-'}</b></div>
+        <div class="row"><span>kv keys</span><b>${n.kvSize ?? '-'}</b></div>
+        <div class="card-actions">
+          <button data-id="${n.id}" data-action="kill" class="danger" ${isDown ? 'disabled' : ''}>Kill</button>
+          <button data-id="${n.id}" data-action="revive" class="good" ${isDown ? '' : 'disabled'}>Revive</button>
+        </div>
+      `;
+      grid.appendChild(card);
+    }
+
+    const leader = nodes.find((n) => n.role === 'leader');
+    const source = leader || nodes.find((n) => n.role !== 'down');
+    if (source) {
+      document.getElementById('dumpSource').textContent = source.id;
+      loadKvTable(source.port);
+    }
+  } catch (e) {
+    // dashboard's own fetch failed; try again next tick
+  }
+}
+
+async function loadKvTable(port) {
+  try {
+    const res = await fetch(`http://localhost:${port}/kv/all`);
+    const { entries } = await res.json();
+    const tbody = document.querySelector('#kvTable tbody');
+    if (!entries.length) {
+      tbody.innerHTML = '<tr><td colspan="2" class="empty">empty</td></tr>';
+      return;
+    }
+    tbody.innerHTML = entries
+      .map(([k, v]) => `<tr><td>${escapeHtml(k)}</td><td>${escapeHtml(v)}</td></tr>`)
+      .join('');
+  } catch {
+    // node unreachable, leave table as-is
+  }
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+grid.addEventListener('click', async (e) => {
+  const btn = e.target.closest('button[data-action]');
+  if (!btn) return;
+  btn.disabled = true;
+  await fetch(`/api/${btn.dataset.action}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ id: btn.dataset.id }),
+  });
+  refresh();
+});
+
+const resultEl = document.getElementById('writeResult');
+
+document.getElementById('setBtn').addEventListener('click', async () => {
+  const key = document.getElementById('key').value;
+  const value = document.getElementById('value').value;
+  if (!key) return;
+  resultEl.textContent = 'writing...';
+  resultEl.className = '';
+  const res = await fetch('/api/write', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ key, value }),
+  });
+  const json = await res.json();
+  if (res.ok) {
+    resultEl.textContent = `committed at log index ${json.index}`;
+    resultEl.className = 'ok';
+  } else {
+    resultEl.textContent = `failed: ${json.error || res.status}`;
+    resultEl.className = 'err';
+  }
+  refresh();
+});
+
+document.getElementById('getBtn').addEventListener('click', async () => {
+  const key = document.getElementById('key').value;
+  if (!key) return;
+  const res = await fetch(`/api/read?key=${encodeURIComponent(key)}`);
+  const json = await res.json();
+  resultEl.textContent = json.value !== null ? `${key} = ${json.value}` : `${key} not found`;
+  resultEl.className = json.value !== null ? 'ok' : 'err';
+});
+
+document.getElementById('delBtn').addEventListener('click', async () => {
+  const key = document.getElementById('key').value;
+  if (!key) return;
+  resultEl.textContent = 'deleting...';
+  resultEl.className = '';
+  // reuse /api/write's leader-routing logic isn't wired for delete; go straight to the write endpoint's cluster fallback via SET-style routing
+  const res = await fetch('/api/write', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ key, value: null, _delete: true }),
+  });
+  const json = await res.json();
+  resultEl.textContent = res.ok ? `deleted (log index ${json.index})` : `failed: ${json.error || res.status}`;
+  resultEl.className = res.ok ? 'ok' : 'err';
+  refresh();
+});
+
+refresh();
+setInterval(refresh, 500);
+</script>
+</body>
+</html>

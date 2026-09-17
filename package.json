@@ -1,0 +1,23 @@
+{
+  "name": "raftkv",
+  "description": "A distributed key-value store built on a from-scratch Raft consensus implementation, with a live cluster dashboard.",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --import tsx --test test/**/*.test.ts",
+    "cluster": "tsx src/cluster.ts",
+    "node": "tsx src/server.ts",
+    "cli": "tsx src/client.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
